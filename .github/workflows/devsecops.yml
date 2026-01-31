@@ -7,22 +7,20 @@ on:
     branches: [ "main" ]
 
 jobs:
-  # --- STAGE 1: STATIC SECURITY (The "Scan" Stage) ---
+  # --- STAGE 1: SECURITY ---
   security-static:
-    name: 🛡️ Security Scanning
+    name: 🛡️ Security
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Secret Scanning (Gitleaks)
-        id: gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Infrastructure Security Scan (Checkov)
-        id: checkov
+      - name: IaC Scan (Checkov)
         uses: bridgecrewio/checkov-action@master
         with:
           directory: k8s/
@@ -30,24 +28,22 @@ jobs:
           quiet: true
           soft_fail: false
 
-  # --- STAGE 2: BUILD & ARTIFACT (The "Compute" Stage) ---
+  # --- STAGE 2: BUILD ---
   build-and-image-scan:
-    name: 🏗️ Build and Image Scan
-    needs: security-static # Only starts if Stage 1 is green
+    name: 🏗️ Build
+    needs: security-static
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Build Docker Image
-        # Note: Using your Day02 path as requested
         run: |
           docker build \
             -t sentinel-app:${{ github.sha }} \
             -f Day02/Dockerfile Day02
 
-      - name: Run Trivy vulnerability scanner
-        id: trivy
+      - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'sentinel-app:${{ github.sha }}'
@@ -55,31 +51,52 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
-  # --- STAGE 3: CHATOPS (The "Alert" Stage) ---
+  # --- STAGE 3: DEPLOY (GitOps Sync) ---
+  deploy-gitops:
+    name: 🚀 Deploy
+    needs: build-and-image-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Update K8s Manifest
+        run: |
+          # This simulates a GitOps update by updating the image tag in your YAML
+          sed -i "s|image: sentinel-app:.*|image: sentinel-app:${{ github.sha }}|g" k8s/deployment.yaml
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add k8s/deployment.yaml
+          git commit -m "chore: update image tag to ${{ github.sha }} [skip ci]"
+          git push origin main
+
+  # --- STAGE 4: NOTIFY ---
   notifications:
-    name: 📢 Slack Notifications
-    needs: [security-static, build-and-image-scan]
-    if: always() # Runs even if previous stages failed
+    name: 📢 Notify
+    needs: [security-static, build-and-image-scan, deploy-gitops]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Determine Failure Reason
         id: reason
         run: |
           if [[ "${{ needs.security-static.result }}" == "failure" ]]; then
-            echo "REASON=Static Security (Gitleaks or Checkov) failed!" >> $GITHUB_ENV
+            echo "REASON=Security Scans Failed" >> $GITHUB_ENV
           elif [[ "${{ needs.build-and-image-scan.result }}" == "failure" ]]; then
-            echo "REASON=Build or Trivy Scan failed!" >> $GITHUB_ENV
+            echo "REASON=Build/Trivy Failed" >> $GITHUB_ENV
+          elif [[ "${{ needs.deploy-gitops.result }}" == "failure" ]]; then
+            echo "REASON=GitOps Deployment Failed" >> $GITHUB_ENV
           else
-            echo "REASON=Pipeline completed successfully!" >> $GITHUB_ENV
+            echo "REASON=All Stages Passed!" >> $GITHUB_ENV
           fi
 
       - name: Send Slack Notification
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_TITLE: 'Sentinel-Flow CI: ${{ needs.build-and-image-scan.result == "success" && "SUCCESS" || "FAILURE" }}'
+          # FIXED: Using single quotes for the expression string
+          SLACK_TITLE: 'Sentinel-Flow CI: ${{ needs.build-and-image-scan.result == 'success' && 'SUCCESS' || 'FAILURE' }}'
           SLACK_MESSAGE: |
-            *Repo:* ${{ github.repository }}
             *Detail:* ${{ env.REASON }}
             *Run:* https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_COLOR: ${{ needs.build-and-image-scan.result == 'success' && 'good' || 'danger' }}
