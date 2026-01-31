@@ -13,7 +13,8 @@ spec:
         app: sentinel
     spec:
       containers:
-      - name: sentinel-container
-        image: node:20-alpine  # We will update this to your Docker Hub image later
+      - name: sentinel
+        image: sentinel-app:v1  # We will update this to your Docker Hub image later
+        imagePullPolicy: Never # Tell K3s to look for the local image you just built
         ports:
         - containerPort: 3000
