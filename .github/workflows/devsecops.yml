@@ -51,6 +51,7 @@ jobs:
       # STEP 4: This is our 'Security Gate'. 
       # Trivy scans the layers of the Docker image for known security flaws (CVEs).
       - name: Run Trivy vulnerability scanner
+        id: trivy  # <--- ADD THIS ID
         uses: aquasecurity/trivy-action@master
         with:
           # Tells Trivy which specific image to scan.
@@ -63,12 +64,32 @@ jobs:
           # We only fail the build for the most dangerous levels of vulnerabilities.
           severity: 'CRITICAL,HIGH'
 
-      # 5. Notify the team of the result
+      # 5. Extract Failure Reason (Only runs if something fails)
+      - name: Get Failure Reason
+        if: failure()
+        id: fail_reason
+        run: |
+          if [[ "${{ steps.gitleaks.outcome }}" == "failure" ]]; then
+            echo "REASON=Secret Scanning (Gitleaks) found leaked credentials!" >> $GITHUB_ENV
+          elif [[ "${{ steps.trivy.outcome }}" == "failure" ]]; then
+            echo "REASON=Vulnerability Scan (Trivy) found High/Critical CVEs!" >> $GITHUB_ENV
+          else
+            echo "REASON=Docker Build or Code Logic Error" >> $GITHUB_ENV
+          fi
+
+      # 6. Send Detailed Slack Notification
       - name: Send Slack Notification
-        if: always() # Runs even if previous steps failed
+        if: always()
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_TITLE: 'Sentinel-Flow CI Result'
-          SLACK_MESSAGE: 'Build Status: ${{ job.status }}'
+          SLACK_TITLE: 'Sentinel-Flow CI: ${{ job.status }}'
+          # This dynamic message pulls the REASON we saved above
+          SLACK_MESSAGE: |
+            *Repo:* ${{ github.repository }}
+            *Branch:* ${{ github.ref_name }}
+            *Status:* ${{ job.status }}
+            *Detail:* ${{ env.REASON || 'All security checks passed successfully!' }}
+            *Action Link:* https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
+          SLACK_ICON: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
