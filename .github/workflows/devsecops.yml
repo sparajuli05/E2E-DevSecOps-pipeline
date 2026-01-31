@@ -32,6 +32,15 @@ jobs:
         env:
           # A built-in token provided by GitHub to allow the action to comment on PRs.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     
+     
+      #STEP 3. Build the Image using Day02 as the source
+      # change this path if you like to use docker file from other location
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t sentinel-app:${{ github.sha }} \
+            -f Day02/Dockerfile Day01
 
       # STEP 3: Create the Docker image using the Dockerfile we hardened in Phase 1.
       # '${{ github.sha }}' is a unique ID for the specific code version being built.
