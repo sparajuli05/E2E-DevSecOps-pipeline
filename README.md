@@ -1,96 +1,122 @@
-Here is the **Phase 3: The Automation Engine (GitHub Actions)** guide, formatted in Markdown. This is where we move from your local computer to the "Cloud" to make the security checks happen automatically.
+Since we’ve set up the "Insecure" version and seen the vulnerabilities, the next logical step for a beginner is learning how to **fix them**.
+
+In 2026, the industry standard for this is the **Multi-Stage Build** using **Distroless** images. This reduces your "attack surface" (the parts of your app a hacker can touch).
+
+Here is **Step 2: Hardening the Container**, formatted in Markdown for your guide.
 
 ----------
 
-# Step 3: Automating the Pipeline with GitHub Actions
+# Step 2: Hardening the Container (The "Secure" Way)
 
-Now that your container is secure, you don't want to run `trivy scan` manually every time. We will use **GitHub Actions** to create an automated "security gate." If the code is insecure, the pipeline will fail and prevent deployment.
+In Step 1, we saw that `node:latest` is full of security holes. Now, we will use **Advanced Automation Techniques** to build a tiny, secure, production-ready image.
 
-## 1. Create the Workflow Directory
+## 1. The Strategy: Multi-Stage Builds
 
-GitHub looks for automation instructions in a specific hidden folder. In your project, create these folders:
+We will split our Dockerfile into two parts:
+
+1.  **The Builder:** A heavy image that installs all our tools and dependencies.
+    
+2.  **The Runtime:** A tiny, "Distroless" image that contains **only** our application and nothing else (no shell, no package manager, no extra tools).
+    
+
+----------
+
+## 2. Create the Secure Dockerfile
+
+Replace the content of your `Dockerfile` with the following code:
+
+Dockerfile
+
+```
+# --- STAGE 1: Build Stage ---
+# We use a standard image to install our dependencies
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency files first for better caching
+COPY package*.json ./
+RUN npm install --only=production
+
+# Copy the rest of your application code
+COPY . .
+
+# --- STAGE 2: Runtime Stage ---
+# We use "Distroless" - it has no shell or extra tools for hackers to use
+FROM gcr.io/distroless/nodejs20-debian12
+
+# Set the environment to production
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# Copy ONLY the necessary files from the builder stage
+COPY --from=builder /app /app
+
+# Run as a non-root user (built into distroless) for safety
+USER nonroot
+
+# Start the application
+CMD ["app.js"]
+
+```
+
+----------
+
+## 3. Build and Verify the "Secure" Version
+
+Now, let's compare the results.
+
+### **A. Build the Secure Image**
 
 Bash
 
 ```
-mkdir -p .github/workflows
+docker build -t secure-app:v1 .
 
 ```
 
-----------
+### **B. Run the Security Scan Again**
 
-## 2. Create the Pipeline File
-
-Create a file named `.github/workflows/devsecops.yml` and paste the following code:
-
-YAML
+Bash
 
 ```
-name: Sentinel-Flow-CI
-
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-jobs:
-  build-and-secure:
-    runs-on: ubuntu-latest
-
-    steps:
-      # 1. Pull the code from GitHub
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # 2. Check for leaked secrets (API Keys)
-      - name: Secret Scanning (Gitleaks)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 3. Build the Secure Docker Image
-      - name: Build Docker Image
-        run: docker build -t sentinel-app:${{ github.sha }} .
-
-      # 4. Run the Security Scan (Automated Trivy)
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: 'sentinel-app:${{ github.sha }}'
-          format: 'table'
-          exit-code: '1' # This stops the pipeline if a vulnerability is found!
-          severity: 'CRITICAL,HIGH'
+trivy image secure-app:v1
 
 ```
 
-----------
-
-## 3. How to Trigger the Automation
-
-1.  **Push to GitHub:** Upload your code to a GitHub repository.
-    
-2.  **Watch the Magic:** Click on the **"Actions"** tab in your GitHub repo.
-    
-3.  **The Security Gate:** If your Dockerfile is still using `node:latest`, the **Trivy** step will turn **Red (Fail)**. If you use the **Multi-stage/Distroless** version we built in Step 2, it will turn **Green (Success)**.
-    
+> [!TIP]
+> 
+> **Observation:** You should see the vulnerability count drop significantly—often to **zero** or just a few minor items. This is "Security-by-Design."
 
 ----------
 
-## 4. Summary & Key Concepts
+## 4. Why This Works (The "Beginner" Logic)
 
-**Concept**
+**Feature**
 
-**What it does for you**
+**Why we do it**
 
-**Triggers**
+**`AS builder`**
 
-Automatically starts the scan every time you `git push`.
+Keeps the final image small by leaving behind build tools.
 
-**Exit Code 1**
+**Distroless Base**
 
-This is the "Gate." It stops the build if security flaws are found.
+If a hacker gets in, they can't run commands like `ls`, `cd`, or `curl`.
 
-**GitHub Managed**
+**`USER nonroot`**
 
-You don't need a server to run this; GitHub provides the compute for free.
+Even if the app is hacked, the attacker cannot change system settings.
+
+----------
+
+## 5. Summary of Step 2
+
+You have successfully:
+
+1.  Implemented a **Multi-Stage Build**.
+    
+2.  Used a **Distroless** image to eliminate 90% of your security risks.
+    
+3.  Proved the fix using **Trivy**.
