@@ -13,8 +13,9 @@ COPY . .
 
 # --- STAGE 2: Runtime Stage ---
 # We use "Distroless" - it has no shell or extra tools for hackers to use
-FROM gcr.io/distroless/nodejs20-debian12
 
+#FROM gcr.io/distroless/nodejs20-debian12
+FROM debian:bookworm-slim
 # Set the environment to production
 ENV NODE_ENV=production
 
