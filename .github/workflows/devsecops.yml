@@ -61,3 +61,13 @@ jobs:
           exit-code: '1' 
           # We only fail the build for the most dangerous levels of vulnerabilities.
           severity: 'CRITICAL,HIGH'
+
+      # 5. Notify the team of the result
+      - name: Send Slack Notification
+        if: always() # Runs even if previous steps failed
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_TITLE: 'Sentinel-Flow CI Result'
+          SLACK_MESSAGE: 'Build Status: ${{ job.status }}'
+          SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
