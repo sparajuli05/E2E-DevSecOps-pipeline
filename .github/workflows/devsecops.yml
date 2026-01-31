@@ -89,7 +89,6 @@ jobs:
           else
             echo "REASON=All Stages Passed!" >> $GITHUB_ENV
           fi
-
       - name: Send Slack Notification
         uses: rtCamp/action-slack-notify@v2
         env:
