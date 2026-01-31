@@ -18,3 +18,5 @@ spec:
         imagePullPolicy: Never # Tell K3s to look for the local image you just built
         ports:
         - containerPort: 3000
+        securityContext:
+          privileged: true

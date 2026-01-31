@@ -76,6 +76,15 @@ jobs:
             echo "REASON=Docker Build or Code Logic Error" >> $GITHUB_ENV
           fi
 
+      # Test the Security Gate Using Checkov for deployment.yml
+      - name: Infrastructure Security Scan (Checkov)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: k8s/
+          framework: kubernetes
+          quiet: true # Only show failed checks
+          soft_fail: false # This will STOP the pipeline if security flaws are found
+
       # 6. Send Detailed Slack Notification
       - name: Send Slack Notification
         if: always()
