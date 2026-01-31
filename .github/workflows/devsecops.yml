@@ -40,8 +40,7 @@ jobs:
         run: |
           docker build \
             -t sentinel-app:${{ github.sha }} \
-            -f Dockerfile
-      #     -f Day01/Dockerfile Day01
+            -f Day02/Dockerfile Day02
 
       # STEP 3: Create the Docker image using the Dockerfile we hardened in Phase 1.
       # '${{ github.sha }}' is a unique ID for the specific code version being built.
