@@ -1,103 +1,85 @@
-# The name of the workflow as it appears in the GitHub Actions 'Actions' tab.
 name: Sentinel-Flow-CI
 
-# 'on' defines the events that trigger this pipeline to run.
 on:
-  # Trigger when code is pushed to the 'main' branch.
   push:
     branches: [ "main" ]
-  # Trigger when a developer opens a Pull Request (PR) targeting the 'main' branch.
   pull_request:
     branches: [ "main" ]
 
-# A workflow is made of one or more 'jobs'.
 jobs:
-  # This job handles building and security checks.
-  build-and-secure:
-    # 'runs-on' specifies the operating system of the GitHub-hosted virtual machine.
-    # 'ubuntu-latest' is the standard, fastest Linux runner.
+  # --- STAGE 1: STATIC SECURITY (The "Scan" Stage) ---
+  security-static:
+    name: 🛡️ Security Scanning
     runs-on: ubuntu-latest
-
-    # A job consists of a sequence of 'steps'.
     steps:
-      # STEP 1: GitHub runners start with an empty directory. 
-      # This 'checkout' action downloads your repository code onto the runner.
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # STEP 2: 'Gitleaks' scans the history of your code for hardcoded passwords, 
-      # API keys, or tokens. This prevents credentials from being leaked accidentally.
       - name: Secret Scanning (Gitleaks)
+        id: gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
-          # A built-in token provided by GitHub to allow the action to comment on PRs.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-     
-     
-      #STEP 3. Build the Image using Day02 as the source
-      # change this path if you like to use docker file from other location
+
+      - name: Infrastructure Security Scan (Checkov)
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: k8s/
+          framework: kubernetes
+          quiet: true
+          soft_fail: false
+
+  # --- STAGE 2: BUILD & ARTIFACT (The "Compute" Stage) ---
+  build-and-image-scan:
+    name: 🏗️ Build and Image Scan
+    needs: security-static # Only starts if Stage 1 is green
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Build Docker Image
+        # Note: Using your Day02 path as requested
         run: |
           docker build \
             -t sentinel-app:${{ github.sha }} \
             -f Day02/Dockerfile Day02
 
-      # STEP 3: Create the Docker image using the Dockerfile we hardened in Phase 1.
-      # '${{ github.sha }}' is a unique ID for the specific code version being built.
-      - name: Build Docker Image
-        run: docker build -t sentinel-app:${{ github.sha }} .
-
-      # STEP 4: This is our 'Security Gate'. 
-      # Trivy scans the layers of the Docker image for known security flaws (CVEs).
       - name: Run Trivy vulnerability scanner
-        id: trivy  # <--- ADD THIS ID
+        id: trivy
         uses: aquasecurity/trivy-action@master
         with:
-          # Tells Trivy which specific image to scan.
           image-ref: 'sentinel-app:${{ github.sha }}'
-          # Output the results in a readable table format within the GitHub console.
           format: 'table'
-          # 'exit-code: 1' means if a threat is found, the build will CRASH (fail).
-          # This prevents insecure code from moving forward to deployment.
-          exit-code: '1' 
-          # We only fail the build for the most dangerous levels of vulnerabilities.
+          exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
-      # 5. Extract Failure Reason (Only runs if something fails)
-      - name: Get Failure Reason
-        if: failure()
-        id: fail_reason
+  # --- STAGE 3: CHATOPS (The "Alert" Stage) ---
+  notifications:
+    name: 📢 Slack Notifications
+    needs: [security-static, build-and-image-scan]
+    if: always() # Runs even if previous stages failed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine Failure Reason
+        id: reason
         run: |
-          if [[ "${{ steps.gitleaks.outcome }}" == "failure" ]]; then
-            echo "REASON=Secret Scanning (Gitleaks) found leaked credentials!" >> $GITHUB_ENV
-          elif [[ "${{ steps.trivy.outcome }}" == "failure" ]]; then
-            echo "REASON=Vulnerability Scan (Trivy) found High/Critical CVEs!" >> $GITHUB_ENV
+          if [[ "${{ needs.security-static.result }}" == "failure" ]]; then
+            echo "REASON=Static Security (Gitleaks or Checkov) failed!" >> $GITHUB_ENV
+          elif [[ "${{ needs.build-and-image-scan.result }}" == "failure" ]]; then
+            echo "REASON=Build or Trivy Scan failed!" >> $GITHUB_ENV
           else
-            echo "REASON=Docker Build or Code Logic Error" >> $GITHUB_ENV
+            echo "REASON=Pipeline completed successfully!" >> $GITHUB_ENV
           fi
 
-      # Test the Security Gate Using Checkov for deployment.yml
-      - name: Infrastructure Security Scan (Checkov)
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: k8s/
-          framework: kubernetes
-          quiet: true # Only show failed checks
-          soft_fail: false # This will STOP the pipeline if security flaws are found
-
-      # 6. Send Detailed Slack Notification
       - name: Send Slack Notification
-        if: always()
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_TITLE: 'Sentinel-Flow CI: ${{ job.status }}'
-          # This dynamic message pulls the REASON we saved above
+          SLACK_TITLE: 'Sentinel-Flow CI: ${{ needs.build-and-image-scan.result == "success" && "SUCCESS" || "FAILURE" }}'
           SLACK_MESSAGE: |
             *Repo:* ${{ github.repository }}
-            *Branch:* ${{ github.ref_name }}
-            *Status:* ${{ job.status }}
-            *Detail:* ${{ env.REASON || 'All security checks passed successfully!' }}
-            *Action Link:* https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
-          SLACK_ICON: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+            *Detail:* ${{ env.REASON }}
+            *Run:* https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_COLOR: ${{ needs.build-and-image-scan.result == 'success' && 'good' || 'danger' }}
