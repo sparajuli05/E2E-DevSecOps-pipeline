@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: sentinel-app
 spec:
-  replicas: 2
+  replicas: 4
   selector:
     matchLabels:
       app: sentinel
