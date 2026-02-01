@@ -13,10 +13,21 @@ spec:
         app: sentinel
     spec:
       containers:
-      - name: sentinel
-        image: sentinel-app:v1  # We will update this to your Docker Hub image later
-        imagePullPolicy: Never # Tell K3s to look for the local image you just built
+      - name: sentinel-container
+        image: sentinel-app:v1
+        imagePullPolicy: Never
+        # --- NEW SECURITY SECTION ---
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        # ----------------------------
         ports:
         - containerPort: 3000
-        securityContext:
-          privileged: true

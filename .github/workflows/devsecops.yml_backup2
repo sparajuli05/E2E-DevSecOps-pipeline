@@ -23,14 +23,6 @@ jobs:
           directory: k8s/
           framework: kubernetes
 
-  SASTCodeAnalysis:
-   name: SAST
-   runs-on: ubuntu-latest
-   steps:
-     - name: Static Application Security Testing (Semgrep)
-       run: |
-         docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep scan --config=auto --error
-
   build:
     name: 🏗️ Build
     needs: security
