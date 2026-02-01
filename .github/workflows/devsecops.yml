@@ -7,43 +7,35 @@ on:
     branches: [ "main" ]
 
 jobs:
-  # --- STAGE 1: SECURITY ---
-  security-static:
+  security:
     name: 🛡️ Security
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Secret Scanning (Gitleaks)
+      - name: Secret Scanning
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: IaC Scan (Checkov)
+      - name: IaC Scan
         uses: bridgecrewio/checkov-action@master
         with:
           directory: k8s/
           framework: kubernetes
-          quiet: true
-          soft_fail: false
 
-  # --- STAGE 2: BUILD ---
-  build-and-image-scan:
+  build:
     name: 🏗️ Build
-    needs: security-static
+    needs: security
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Build Docker Image
         run: |
           docker build \
             -t sentinel-app:${{ github.sha }} \
             -f Day02/Dockerfile Day02
-
-      - name: Trivy Image Scan
+      - name: Trivy Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'sentinel-app:${{ github.sha }}'
@@ -51,51 +43,39 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
-  # --- STAGE 3: DEPLOY (GitOps Sync) ---
-  deploy-gitops:
+  deploy:
     name: 🚀 Deploy
-    needs: build-and-image-scan
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Update K8s Manifest
+      - name: Update Manifest
         run: |
-          # This simulates a GitOps update by updating the image tag in your YAML
           sed -i "s|image: sentinel-app:.*|image: sentinel-app:${{ github.sha }}|g" k8s/deployment.yaml
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
           git add k8s/deployment.yaml
-          git commit -m "chore: update image tag to ${{ github.sha }} [skip ci]"
+          git commit -m "chore: update image tag [skip ci]" || echo "No changes to commit"
           git push origin main
 
-  # --- STAGE 4: NOTIFY ---
-  notifications:
+  notify:
     name: 📢 Notify
-    needs: [security-static, build-and-image-scan, deploy-gitops]
+    needs: [security, build, deploy]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Determine Failure Reason
-        id: reason
-        run: |
-          if [[ "${{ needs.security-static.result }}" == "failure" ]]; then
-            echo "REASON=Security Scans Failed" >> $GITHUB_ENV
-          elif [[ "${{ needs.build-and-image-scan.result }}" == "failure" ]]; then
-            echo "REASON=Build/Trivy Failed" >> $GITHUB_ENV
-          elif [[ "${{ needs.deploy-gitops.result }}" == "failure" ]]; then
-            echo "REASON=GitOps Deployment Failed" >> $GITHUB_ENV
-          else
-            echo "REASON=All Stages Passed!" >> $GITHUB_ENV
-          fi
       - name: Send Slack Notification
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # FIXED: Using single quotes for the expression string
-          SLACK_TITLE: 'Sentinel-Flow CI: ${{ needs.build-and-image-scan.result == 'success' && 'SUCCESS' || 'FAILURE' }}'
+          # Logic: If 'deploy' (the last job) succeeded, the whole thing is 'good'
+          SLACK_COLOR: ${{ needs.deploy.result == 'success' && 'good' || 'danger' }}
+          SLACK_TITLE: 'Sentinel-Flow Status: ${{ needs.deploy.result }}'
           SLACK_MESSAGE: |
-            *Detail:* ${{ env.REASON }}
+            *Pipeline Results:*
+            - Security: ${{ needs.security.result }}
+            - Build: ${{ needs.build.result }}
+            - Deploy: ${{ needs.deploy.result }}
+            *Commit:* ${{ github.sha }}
             *Run:* https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SLACK_COLOR: ${{ needs.build-and-image-scan.result == 'success' && 'good' || 'danger' }}
